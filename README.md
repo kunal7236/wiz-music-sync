@@ -6,6 +6,8 @@ It captures the audio other apps play (Android's AudioPlaybackCapture), analyses
 
 ## How the lights behave
 
+These are the defaults. Every row can be changed in the app under **Light colours**: tap a row to pick its colour and brightness (or warmth and brightness for the paused state), use **Try on bulb** to preview it, and **Reset to defaults** to go back. Changes apply immediately, even while syncing.
+
 | Music | Bulb |
 |---|---|
 | Quiet / background | Blue, 60% |
@@ -25,7 +27,7 @@ Requires Android 10 or newer, and the device must be on the same Wi-Fi network a
 
 ## Use
 
-1. Enter your bulb's IP address (find it in your router's device list, or in the WiZ app under the bulb's settings).
+1. Tap **Scan** to find WiZ bulbs on your Wi-Fi and pick yours, or type its IP address. The scan only runs when you tap the button.
 2. Tap **Start sync** and allow:
    - **Microphone → While using the app.** Android files audio capture under this permission; the app never opens the mic.
    - **Notifications → Allow.** Shows a notification with a **Stop** button while syncing.
@@ -53,7 +55,9 @@ Release builds are signed only if `~/.android-keystores/wizmusicsync.properties`
 ## How it works
 
 - `LightEngine.kt` — the audio analysis: RMS level, 35–160 Hz bass energy, rolling averages, colour tiers, bass-drop detection and idle detection, computed on 1024-sample chunks at 48 kHz.
+- `LightTheme.kt` — the colour for each state, with the defaults above.
 - `SyncService.kt` — foreground service that captures media audio, runs the engine and sends `setPilot` UDP commands, delayed by the speaker-delay setting.
+- `WizBulb.kt` — WiZ UDP payloads, bulb discovery (broadcast `registration`/`getPilot`, then `getSystemConfig` for the model) and saving the colour theme.
 - `MainActivity.kt` — the settings screen.
 
 No third-party libraries.

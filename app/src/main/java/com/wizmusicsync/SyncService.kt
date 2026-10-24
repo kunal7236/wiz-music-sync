@@ -21,7 +21,6 @@ import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
-import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
@@ -42,7 +41,6 @@ class SyncService : Service() {
         const val EXTRA_RESULT_DATA = "resultData"
         const val EXTRA_BULB_IP = "bulbIp"
 
-        const val PORT = 38899
         const val SAMPLE_RATE = 48000
         const val CHUNK = 1024
         const val CHANNELS = 2
@@ -85,6 +83,7 @@ class SyncService : Service() {
             @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
         bulbIp = intent.getStringExtra(EXTRA_BULB_IP).orEmpty()
+        ThemeStore.load(this)
 
         // Must be in the foreground before the MediaProjection token is redeemed (Android 14+)
         startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -142,7 +141,7 @@ class SyncService : Service() {
 
         capturing = true
         captureThread = Thread({
-            val engine = LightEngine(SAMPLE_RATE, nowSeconds())
+            val engine = LightEngine(SAMPLE_RATE, nowSeconds()) { ThemeStore.current }
             val buffer = ShortArray(CHUNK * CHANNELS)
             rec.startRecording()
             while (capturing) {
@@ -173,24 +172,9 @@ class SyncService : Service() {
     private fun nowSeconds() = System.nanoTime() / 1e9
 
     // ----------------- UDP DISPATCH -----------------
-    private fun payload(command: LightEngine.Command): String {
-        val params = JSONObject().put("state", true)
-        when (command) {
-            is LightEngine.Command.Pilot -> params
-                .put("r", command.r)
-                .put("g", command.g)
-                .put("b", command.b)
-                .put("c", 0)
-                .put("w", 0)
-                .put("dimming", command.dimming.coerceIn(55, 100))
-                .put("speed", 100)
-            // Clean natural white using the bulb's dedicated white diodes
-            LightEngine.Command.White -> params
-                .put("temp", 4200)
-                .put("dimming", 100)
-                .put("speed", 100)
-        }
-        return JSONObject().put("id", 1).put("method", "setPilot").put("params", params).toString()
+    private fun payload(command: LightEngine.Command): String = when (command) {
+        is LightEngine.Command.Pilot -> WizBulb.pilot(LightColor(command.r, command.g, command.b, command.dimming))
+        is LightEngine.Command.White -> WizBulb.white(WhiteLight(command.temp, command.dimming))
     }
 
     /** Runs on the sender thread only. */
@@ -198,7 +182,7 @@ class SyncService : Service() {
         try {
             val address = bulbAddress ?: InetAddress.getByName(bulbIp).also { bulbAddress = it }
             val bytes = payload(command).toByteArray()
-            socket?.send(DatagramPacket(bytes, bytes.size, address, PORT))
+            socket?.send(DatagramPacket(bytes, bytes.size, address, WizBulb.PORT))
         } catch (_: Exception) {
         }
     }
@@ -246,9 +230,10 @@ class SyncService : Service() {
         projection?.stop()
         projection = null
 
-        // Drop any delayed colour commands, then restore comfortable white light
+        // Drop any delayed colour commands, then restore the idle white light
         sender?.let { executor ->
-            executor.execute { send(LightEngine.Command.White) }
+            val idle = ThemeStore.current.idle
+            executor.execute { send(LightEngine.Command.White(idle.temp, idle.dimming)) }
             executor.shutdown()
             executor.awaitTermination(1, TimeUnit.SECONDS)
         }

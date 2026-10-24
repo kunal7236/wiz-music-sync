@@ -3,6 +3,8 @@
 
     <!-- UDP commands to the bulb on the local network -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Finds the Wi-Fi subnet's broadcast address for the bulb scan -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- Required by Android for AudioPlaybackCapture; the microphone itself is never opened -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

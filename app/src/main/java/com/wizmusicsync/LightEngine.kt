@@ -11,26 +11,22 @@ import kotlin.math.sqrt
  * Port of the laptop script's analysis loop (tiers, bass drop, idle white).
  * Feed it every captured chunk; it returns the bulb command to send, if any.
  * Pure Kotlin with no Android dependencies, so it can be checked against the Python original.
+ *
+ * @param theme read on every chunk, so colour edits apply while syncing
  */
-class LightEngine(private val rate: Int, startTime: Double) {
+class LightEngine(
+    private val rate: Int,
+    startTime: Double,
+    private val theme: () -> LightTheme = { LightTheme.DEFAULT },
+) {
 
     sealed class Command {
         data class Pilot(val r: Int, val g: Int, val b: Int, val dimming: Int) : Command()
-        data object White : Command()
+        data class White(val temp: Int, val dimming: Int) : Command()
     }
 
-    data class Tier(val name: String, val r: Int, val g: Int, val b: Int, val dim: Int)
-
     companion object {
-        // ----------------- DISCRETE COLOR TIERS -----------------
-        val COLOR_TIERS = listOf(
-            Tier("LOW/BLUE", 0, 0, 255, 60),       // Low background wave
-            Tier("MIDS/GREEN", 0, 255, 0, 70),     // Vocals / Mids
-            Tier("DRIVE/AMBER", 255, 120, 0, 85),  // Synths / Drive
-            Tier("HIGH/MAGENTA", 255, 0, 160, 95), // High intensity
-        )
-
-        val COLOR_DROP = Tier("BASS DROP", 255, 0, 0, 100) // Peak bass kick
+        private val TIER_LABELS = listOf("LOW", "MIDS", "DRIVE", "HIGH")
     }
 
     private val historyImpact = DoubleArray(50) { 100.0 }
@@ -69,8 +65,9 @@ class LightEngine(private val rate: Int, startTime: Double) {
             if (now - silenceStartTime > 1.2) {
                 if (!isCurrentlyIdle) {
                     isCurrentlyIdle = true
-                    status = "[IDLE / NO MUSIC] Bright white light"
-                    return Command.White
+                    status = "[IDLE / NO MUSIC] White light"
+                    val idle = theme().idle
+                    return Command.White(idle.temp, idle.dimming)
                 }
                 return null
             }
@@ -99,11 +96,12 @@ class LightEngine(private val rate: Int, startTime: Double) {
 
         val isBassDrop = (bassEnergy > avgBass * 1.55) && (rms > avgImpact * 0.5)
 
-        val tier: Tier
+        val current = theme()
+        val color: LightColor
         val tierName: String
         if (isBassDrop && (now - lastDropTime > 0.14)) {
             lastDropTime = now
-            tier = COLOR_DROP
+            color = current.drop
             tierName = "[BASS DROP FLASH]"
         } else {
             val targetTier = when {
@@ -115,15 +113,15 @@ class LightEngine(private val rate: Int, startTime: Double) {
 
             activeTierIdx = if (targetTier >= activeTierIdx) targetTier else max(0, activeTierIdx - 1)
 
-            tier = COLOR_TIERS[activeTierIdx]
-            tierName = "[${tier.name}]"
+            color = current.tiers[activeTierIdx]
+            tierName = "[${TIER_LABELS[activeTierIdx]}]"
         }
 
         if (now - lastSend >= 0.075) {
             lastSend = now
             val bar = "#".repeat((normLevel * 20).toInt())
-            status = "%-19s Level: %5.1f%% | Dim: %3d%%\n[%-20s]".format(tierName, normLevel * 100, tier.dim, bar)
-            return Command.Pilot(tier.r, tier.g, tier.b, tier.dim)
+            status = "%-19s Level: %5.1f%% | Dim: %3d%%\n[%-20s]".format(tierName, normLevel * 100, color.dimming, bar)
+            return Command.Pilot(color.r, color.g, color.b, color.dimming)
         }
         return null
     }
