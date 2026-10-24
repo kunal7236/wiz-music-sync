@@ -13,28 +13,32 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.text.Editable
+import android.text.TextWatcher
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioGroup
 import android.widget.SeekBar
 import android.widget.TextView
 import java.util.concurrent.Executors
-import kotlin.math.ln
-import kotlin.math.pow
+import kotlin.math.max
 
 class MainActivity : Activity() {
 
     companion object {
-        private const val DEFAULT_BULB_IP = "192.168.0.106"
         private const val MAX_DELAY_MS = 500
         private const val DELAY_STEP_MS = 10
         private const val REQUEST_PERMISSIONS = 1
         private const val REQUEST_PROJECTION = 2
+        /** Minimum gap between bulb updates while dragging the fixed-colour picker. */
+        private const val FIXED_PUSH_INTERVAL_MS = 100L
 
-        /** Rows 0-3 are the theme's tiers, 4 is the bass-drop flash, 5 is the idle white. */
+        /** Rows 0-3 are the theme's tiers, 4 is the bass-drop flash, 5 is the idle light. */
         private val ROW_NAMES = listOf(
             "Quiet / background",
             "Vocals / mids",
@@ -47,18 +51,25 @@ class MainActivity : Activity() {
         private const val IDLE_ROW = 5
     }
 
-    private val prefs by lazy { getSharedPreferences("settings", MODE_PRIVATE) }
     private val io = Executors.newSingleThreadExecutor()
 
     private lateinit var bulbIp: EditText
     private lateinit var scan: Button
+    private lateinit var mode: RadioGroup
+    private lateinit var fixedSection: View
+    private lateinit var fixedPicker: LightPickerView
+    private lateinit var syncSection: View
     private lateinit var delayLabel: TextView
     private lateinit var delay: SeekBar
+    private lateinit var sensitivityLabel: TextView
+    private lateinit var sensitivity: SeekBar
     private lateinit var colorRows: LinearLayout
     private lateinit var toggle: Button
     private lateinit var statusView: TextView
     private var message: String? = null
     private var scanning = false
+    /** True while views are being filled from [Settings], so their listeners don't write back. */
+    private var binding = false
 
     private val ui = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
@@ -68,50 +79,79 @@ class MainActivity : Activity() {
         }
     }
 
+    // Fixed colour: send the latest picked colour, at most every FIXED_PUSH_INTERVAL_MS
+    private var pendingFixed: BulbLight? = null
+    private var lastFixedPush = 0L
+    private val pushFixed = object : Runnable {
+        override fun run() {
+            val light = pendingFixed ?: return
+            pendingFixed = null
+            lastFixedPush = SystemClock.uptimeMillis()
+            sendToBulb(light)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         bulbIp = findViewById(R.id.bulbIp)
         scan = findViewById(R.id.scan)
+        mode = findViewById(R.id.mode)
+        fixedSection = findViewById(R.id.fixedSection)
+        fixedPicker = findViewById(R.id.fixedPicker)
+        syncSection = findViewById(R.id.syncSection)
         delayLabel = findViewById(R.id.delayLabel)
         delay = findViewById(R.id.delay)
+        sensitivityLabel = findViewById(R.id.sensitivityLabel)
+        sensitivity = findViewById(R.id.sensitivity)
         colorRows = findViewById(R.id.colorRows)
         toggle = findViewById(R.id.toggle)
         statusView = findViewById(R.id.status)
 
-        ThemeStore.load(this)
-        bulbIp.setText(prefs.getString("bulbIp", DEFAULT_BULB_IP))
+        Settings.load(this)
 
-        val savedDelay = prefs.getInt("delayMs", 0)
-        SyncService.delayMs = savedDelay
-        delay.max = MAX_DELAY_MS / DELAY_STEP_MS
-        delay.progress = savedDelay / DELAY_STEP_MS
-        showDelay(savedDelay)
-        delay.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                val ms = progress * DELAY_STEP_MS
-                SyncService.delayMs = ms
-                showDelay(ms)
-                prefs.edit().putInt("delayMs", ms).apply()
+        bulbIp.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable) {
+                if (!binding) Settings.setBulbIp(this@MainActivity, s.toString().trim())
             }
 
-            override fun onStartTrackingTouch(seekBar: SeekBar) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar) {}
+            override fun beforeTextChanged(s: CharSequence, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence, start: Int, before: Int, count: Int) {}
         })
-
         scan.setOnClickListener { scanForBulbs() }
 
-        refreshColorRows()
+        mode.setOnCheckedChangeListener { _, checkedId ->
+            if (binding) return@setOnCheckedChangeListener
+            switchMode(fixed = checkedId == R.id.modeFixed)
+        }
+        fixedPicker.onChange = { light ->
+            Settings.setFixedLight(this, light)
+            queueFixed(light)
+        }
+
+        delay.max = MAX_DELAY_MS / DELAY_STEP_MS
+        delay.setOnSeekBarChangeListener(seekListener { progress ->
+            val ms = progress * DELAY_STEP_MS
+            showDelay(ms)
+            if (!binding) Settings.setDelayMs(this, ms)
+        })
+        sensitivity.max = 100
+        sensitivity.setOnSeekBarChangeListener(seekListener { value ->
+            showSensitivity(value)
+            if (!binding) Settings.setSensitivity(this, value)
+        })
+
         findViewById<Button>(R.id.resetColors).setOnClickListener {
             AlertDialog.Builder(this)
                 .setMessage("Reset all light colours to the defaults?")
                 .setPositiveButton("Reset") { _, _ ->
-                    ThemeStore.reset(this)
+                    Settings.resetTheme(this)
                     refreshColorRows()
                 }
                 .setNegativeButton("Cancel", null)
                 .show()
         }
+        findViewById<Button>(R.id.resetAll).setOnClickListener { confirmResetAll() }
 
         toggle.setOnClickListener {
             message = null
@@ -121,6 +161,8 @@ class MainActivity : Activity() {
                 requestStart()
             }
         }
+
+        bindFromSettings()
     }
 
     override fun onResume() {
@@ -134,12 +176,94 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        ui.removeCallbacks(pushFixed)
         io.shutdown()
         super.onDestroy()
     }
 
+    /** Fills every control from [Settings] (on start and after Reset all). */
+    private fun bindFromSettings() {
+        binding = true
+        bulbIp.setText(Settings.bulbIp)
+        mode.check(if (Settings.fixedMode) R.id.modeFixed else R.id.modeSync)
+        fixedPicker.setLight(Settings.fixedLight)
+        delay.progress = Settings.delayMs / DELAY_STEP_MS
+        showDelay(Settings.delayMs)
+        sensitivity.progress = Settings.sensitivity
+        showSensitivity(Settings.sensitivity)
+        binding = false
+        showSections()
+        refreshColorRows()
+    }
+
+    private fun showSections() {
+        fixedSection.visibility = if (Settings.fixedMode) View.VISIBLE else View.GONE
+        syncSection.visibility = if (Settings.fixedMode) View.GONE else View.VISIBLE
+    }
+
+    private fun switchMode(fixed: Boolean) {
+        message = null
+        Settings.setFixedMode(this, fixed)
+        showSections()
+        if (fixed) {
+            if (SyncService.isRunning) {
+                // Stop capturing without the usual "back to white" so the fixed colour takes over cleanly
+                startService(
+                    Intent(this, SyncService::class.java)
+                        .setAction(SyncService.ACTION_STOP)
+                        .putExtra(SyncService.EXTRA_SKIP_RESTORE, true)
+                )
+                // Give the service a moment to drop its queued colours before we set ours
+                queueFixed(Settings.fixedLight, delayMs = 400)
+            } else {
+                queueFixed(Settings.fixedLight, delayMs = 0)
+            }
+        }
+    }
+
+    private fun queueFixed(light: BulbLight, delayMs: Long? = null) {
+        pendingFixed = light
+        if (ui.hasCallbacks(pushFixed)) return
+        val wait = delayMs ?: max(0L, FIXED_PUSH_INTERVAL_MS - (SystemClock.uptimeMillis() - lastFixedPush))
+        ui.postDelayed(pushFixed, wait)
+    }
+
+    private fun sendToBulb(light: BulbLight) {
+        val ip = currentIp()
+        if (ip.isEmpty()) return
+        val payload = WizBulb.payload(light)
+        io.execute { WizBulb.sendOnce(ip, payload) }
+    }
+
+    private fun confirmResetAll() {
+        AlertDialog.Builder(this)
+            .setTitle("Reset all settings?")
+            .setMessage(
+                "Bulb IP, speaker delay, sensitivity, mode, fixed colour and all light colours " +
+                    "go back to how they were when the app was installed."
+            )
+            .setPositiveButton("Reset all") { _, _ ->
+                Settings.resetAll(this)
+                bindFromSettings()
+                message = "All settings are back to their defaults."
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun showDelay(ms: Int) {
         delayLabel.text = "Speaker delay: $ms ms"
+    }
+
+    private fun showSensitivity(value: Int) {
+        val word = when {
+            value < 20 -> "Very low"
+            value < 45 -> "Low"
+            value <= 55 -> "Normal"
+            value <= 80 -> "High"
+            else -> "Very high"
+        }
+        sensitivityLabel.text = "Sensitivity: $word"
     }
 
     private fun updateUi() {
@@ -147,10 +271,21 @@ class MainActivity : Activity() {
         toggle.text = if (running) "Stop sync" else "Start sync"
         bulbIp.isEnabled = !running
         scan.isEnabled = !running && !scanning
-        statusView.text = if (running) SyncService.status else message ?: SyncService.status
+        statusView.text = when {
+            running -> SyncService.status
+            message != null -> message
+            Settings.fixedMode -> "Fixed colour: ${describe(Settings.fixedLight)}"
+            else -> SyncService.status
+        }
     }
 
     private fun currentIp() = bulbIp.text.toString().trim()
+
+    private fun seekListener(onChange: (Int) -> Unit) = object : SeekBar.OnSeekBarChangeListener {
+        override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) = onChange(progress)
+        override fun onStartTrackingTouch(seekBar: SeekBar) {}
+        override fun onStopTrackingTouch(seekBar: SeekBar) {}
+    }
 
     // ----------------- BULB SCAN -----------------
     private fun scanForBulbs() {
@@ -188,7 +323,6 @@ class MainActivity : Activity() {
             .setItems(labels) { _, which ->
                 val ip = bulbs[which].ip
                 bulbIp.setText(ip)
-                prefs.edit().putString("bulbIp", ip).apply()
                 message = "Bulb set to $ip"
             }
             .setNegativeButton("Cancel", null)
@@ -198,18 +332,13 @@ class MainActivity : Activity() {
     // ----------------- LIGHT COLOURS -----------------
     private fun refreshColorRows() {
         colorRows.removeAllViews()
-        val lights = ThemeStore.current
+        val lights = Settings.theme
         val rowBackground = TypedValue().also {
             theme.resolveAttribute(android.R.attr.selectableItemBackground, it, true)
         }.resourceId
 
         ROW_NAMES.forEachIndexed { index, name ->
-            val (swatch, detail) = when (index) {
-                IDLE_ROW -> kelvinToColor(lights.idle.temp) to "${lights.idle.temp} K white · ${lights.idle.dimming}%"
-                DROP_ROW -> describe(lights.drop)
-                else -> describe(lights.tiers[index])
-            }
-
+            val light = lightFor(lights, index)
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
@@ -220,7 +349,7 @@ class MainActivity : Activity() {
             row.addView(View(this).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(swatch)
+                    setColor(swatchColor(light))
                     setStroke(dp(1), Color.GRAY)
                 }
             }, LinearLayout.LayoutParams(dp(36), dp(36)).apply { marginEnd = dp(16) })
@@ -231,7 +360,7 @@ class MainActivity : Activity() {
                     setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Medium)
                 })
                 addView(TextView(this@MainActivity).apply {
-                    text = detail
+                    text = describe(light)
                     setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Small)
                 })
             })
@@ -239,61 +368,31 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun describe(c: LightColor) =
-        Color.rgb(c.r, c.g, c.b) to "#%02X%02X%02X · %d%%".format(c.r, c.g, c.b, c.dimming)
+    private fun lightFor(theme: LightTheme, index: Int): BulbLight = when (index) {
+        IDLE_ROW -> theme.idle
+        DROP_ROW -> theme.drop
+        else -> theme.tiers[index]
+    }
 
     private fun openEditor(index: Int) {
-        val theme = ThemeStore.current
-        val isIdle = index == IDLE_ROW
-        val box = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        val picker = LightPickerView(this).apply {
             setPadding(dp(24), dp(16), dp(24), 0)
+            setLight(lightFor(Settings.theme, index))
         }
-        val preview = View(this)
-        val previewShape = GradientDrawable().apply { cornerRadius = dp(8).toFloat() }
-        preview.background = previewShape
-        box.addView(preview, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(56)))
-
-        // Editor state; returns the edited colour or white for "Save" and "Try on bulb"
-        val build: () -> Any
-        if (isIdle) {
-            var temp = theme.idle.temp
-            var dimming = theme.idle.dimming
-            fun update() = previewShape.setColor(kelvinToColor(temp))
-            addSlider(box, "Warmth", 22, 65, temp / 100, { "${it * 100} K" }) { temp = it * 100; update() }
-            addSlider(box, "Brightness", 10, 100, dimming, { "$it%" }) { dimming = it }
-            update()
-            build = { WhiteLight(temp, dimming) }
-        } else {
-            val start = if (index == DROP_ROW) theme.drop else theme.tiers[index]
-            var rgb = Color.rgb(start.r, start.g, start.b)
-            var dimming = start.dimming
-            val hsv = FloatArray(3).also { Color.colorToHSV(rgb, it) }
-            fun update() = previewShape.setColor(rgb)
-            // Only re-derive RGB once a colour slider is touched, so unedited colours stay exact
-            fun fromHsv() {
-                rgb = Color.HSVToColor(floatArrayOf(hsv[0], hsv[1], 1f))
-                update()
-            }
-            addSlider(box, "Colour", 0, 359, hsv[0].toInt(), { "$it°" }) { hsv[0] = it.toFloat(); fromHsv() }
-            addSlider(box, "Saturation", 0, 100, (hsv[1] * 100).toInt(), { "$it%" }) { hsv[1] = it / 100f; fromHsv() }
-            addSlider(box, "Brightness", 10, 100, dimming, { "$it%" }) { dimming = it }
-            update()
-            build = { LightColor(Color.red(rgb), Color.green(rgb), Color.blue(rgb), dimming) }
-        }
-
         var tried = false
         val dialog = AlertDialog.Builder(this)
             .setTitle(ROW_NAMES[index])
-            .setView(box)
+            .setView(android.widget.ScrollView(this).apply { addView(picker) })
             .setPositiveButton("Save") { _, _ ->
-                val edited = build()
-                val updated = when {
-                    edited is WhiteLight -> theme.copy(idle = edited)
-                    index == DROP_ROW -> theme.copy(drop = edited as LightColor)
-                    else -> theme.copy(tiers = theme.tiers.toMutableList().also { it[index] = edited as LightColor })
-                }
-                ThemeStore.save(this, updated)
+                val edited = picker.light
+                val theme = Settings.theme
+                Settings.setTheme(
+                    this, when (index) {
+                        IDLE_ROW -> theme.copy(idle = edited)
+                        DROP_ROW -> theme.copy(drop = edited)
+                        else -> theme.copy(tiers = theme.tiers.toMutableList().also { it[index] = edited })
+                    }
+                )
                 refreshColorRows()
             }
             .setNegativeButton("Cancel", null)
@@ -302,69 +401,15 @@ class MainActivity : Activity() {
         dialog.setOnShowListener {
             // Keep the dialog open when trying a colour
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                val ip = currentIp()
-                if (ip.isEmpty()) return@setOnClickListener
                 tried = true
-                val payload = when (val edited = build()) {
-                    is WhiteLight -> WizBulb.white(edited)
-                    else -> WizBulb.pilot(edited as LightColor)
-                }
-                io.execute { WizBulb.sendOnce(ip, payload) }
+                sendToBulb(picker.light)
             }
         }
         dialog.setOnDismissListener {
-            // Put the bulb back to normal white after a try, unless the sync is driving it
-            if (tried && !SyncService.isRunning) {
-                val ip = currentIp()
-                val payload = WizBulb.white(ThemeStore.current.idle)
-                io.execute { WizBulb.sendOnce(ip, payload) }
-            }
+            // Put the bulb back after a try, unless the sync is driving it
+            if (tried && !SyncService.isRunning) sendToBulb(Settings.theme.idle)
         }
         dialog.show()
-    }
-
-    private fun addSlider(
-        parent: LinearLayout,
-        label: String,
-        min: Int,
-        max: Int,
-        value: Int,
-        format: (Int) -> String,
-        onChange: (Int) -> Unit,
-    ) {
-        val title = TextView(this).apply {
-            text = "$label: ${format(value)}"
-            setPadding(0, dp(16), 0, 0)
-        }
-        val slider = SeekBar(this).apply {
-            this.min = min
-            this.max = max
-            progress = value
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(seekBar: SeekBar, progress: Int, fromUser: Boolean) {
-                    title.text = "$label: ${format(progress)}"
-                    if (fromUser) onChange(progress)
-                }
-
-                override fun onStartTrackingTouch(seekBar: SeekBar) {}
-                override fun onStopTrackingTouch(seekBar: SeekBar) {}
-            })
-        }
-        parent.addView(title)
-        parent.addView(slider)
-    }
-
-    /** Approximate on-screen colour of white light at [kelvin] (Tanner Helland's fit). */
-    private fun kelvinToColor(kelvin: Int): Int {
-        val t = kelvin / 100.0
-        val r = if (t <= 66) 255.0 else 329.698727446 * (t - 60).pow(-0.1332047592)
-        val g = if (t <= 66) 99.4708025861 * ln(t) - 161.1195681661 else 288.1221695283 * (t - 60).pow(-0.0755148492)
-        val b = when {
-            t >= 66 -> 255.0
-            t <= 19 -> 0.0
-            else -> 138.5177312231 * ln(t - 10) - 305.0447927307
-        }
-        return Color.rgb(r.toInt().coerceIn(0, 255), g.toInt().coerceIn(0, 255), b.toInt().coerceIn(0, 255))
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -417,14 +462,12 @@ class MainActivity : Activity() {
             message = "Capture permission was declined."
             return
         }
-        val ip = currentIp()
-        prefs.edit().putString("bulbIp", ip).apply()
         startForegroundService(
             Intent(this, SyncService::class.java)
                 .setAction(SyncService.ACTION_START)
                 .putExtra(SyncService.EXTRA_RESULT_CODE, resultCode)
                 .putExtra(SyncService.EXTRA_RESULT_DATA, data)
-                .putExtra(SyncService.EXTRA_BULB_IP, ip)
+                .putExtra(SyncService.EXTRA_BULB_IP, currentIp())
         )
     }
 }

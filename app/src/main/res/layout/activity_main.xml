@@ -40,59 +40,130 @@
                 android:text="Scan" />
         </LinearLayout>
 
-        <TextView
-            android:id="@+id/delayLabel"
-            android:layout_width="wrap_content"
+        <RadioGroup
+            android:id="@+id/mode"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
+            android:orientation="horizontal">
 
-        <SeekBar
-            android:id="@+id/delay"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp" />
+            <RadioButton
+                android:id="@+id/modeSync"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Music sync" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Raise this if the lights change before you hear the beat on a Bluetooth speaker. Works while syncing."
-            android:textAppearance="?android:attr/textAppearanceSmall" />
+            <RadioButton
+                android:id="@+id/modeFixed"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Fixed colour" />
+        </RadioGroup>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="32dp"
-            android:text="Light colours"
-            android:textAppearance="?android:attr/textAppearanceMedium" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:text="Tap a row to change it. Changes apply straight away, even while syncing."
-            android:textAppearance="?android:attr/textAppearanceSmall" />
-
+        <!-- ============ FIXED COLOUR ============ -->
         <LinearLayout
-            android:id="@+id/colorRows"
+            android:id="@+id/fixedSection"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:orientation="vertical" />
+            android:layout_marginTop="16dp"
+            android:orientation="vertical">
 
-        <Button
-            android:id="@+id/resetColors"
-            style="?android:attr/borderlessButtonStyle"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="Reset to defaults" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="The bulb stays on this colour and ignores the music. Changes show on the bulb as you pick."
+                android:textAppearance="?android:attr/textAppearanceSmall" />
 
-        <Button
-            android:id="@+id/toggle"
+            <com.wizmusicsync.LightPickerView
+                android:id="@+id/fixedPicker"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp" />
+        </LinearLayout>
+
+        <!-- ============ MUSIC SYNC ============ -->
+        <LinearLayout
+            android:id="@+id/syncSection"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp" />
+            android:orientation="vertical">
+
+            <TextView
+                android:id="@+id/delayLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:textAppearance="?android:attr/textAppearanceMedium" />
+
+            <SeekBar
+                android:id="@+id/delay"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Raise this if the lights change before you hear the beat on a Bluetooth speaker. Works while syncing."
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <TextView
+                android:id="@+id/sensitivityLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:textAppearance="?android:attr/textAppearanceMedium" />
+
+            <SeekBar
+                android:id="@+id/sensitivity"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Higher reaches the brighter colours more easily; lower keeps the light calmer."
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="32dp"
+                android:text="Light colours"
+                android:textAppearance="?android:attr/textAppearanceMedium" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Tap a row to change it. Changes apply straight away, even while syncing."
+                android:textAppearance="?android:attr/textAppearanceSmall" />
+
+            <LinearLayout
+                android:id="@+id/colorRows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical" />
+
+            <Button
+                android:id="@+id/resetColors"
+                style="?android:attr/borderlessButtonStyle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Reset colours" />
+
+            <Button
+                android:id="@+id/toggle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp" />
+        </LinearLayout>
 
         <TextView
             android:id="@+id/status"
@@ -101,5 +172,14 @@
             android:layout_marginTop="24dp"
             android:fontFamily="monospace"
             android:textAppearance="?android:attr/textAppearanceSmall" />
+
+        <Button
+            android:id="@+id/resetAll"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="32dp"
+            android:text="Reset all settings" />
     </LinearLayout>
 </ScrollView>

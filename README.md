@@ -4,9 +4,16 @@ An Android app that makes a WiZ Wi-Fi bulb react to whatever music is playing on
 
 It captures the audio other apps play (Android's AudioPlaybackCapture), analyses it, and sends colour commands straight to the bulb over your local Wi-Fi. Music keeps playing to your Bluetooth speaker or headphones as normal.
 
-## How the lights behave
+## Two modes
 
-These are the defaults. Every row can be changed in the app under **Light colours**: tap a row to pick its colour and brightness (or warmth and brightness for the paused state), use **Try on bulb** to preview it, and **Reset to defaults** to go back. Changes apply immediately, even while syncing.
+- **Music sync** — the bulb follows the music, as described below.
+- **Fixed colour** — pick any colour or white on a colour wheel and the bulb stays on it, whatever is playing. The bulb updates live as you drag. Audio capture is fully off in this mode.
+
+## How the lights behave in Music sync
+
+These are the defaults. Every row can be changed in the app under **Light colours**: tap a row to choose a colour on the wheel or a white (warm, neutral, daylight or any warmth), set its brightness, use **Try on bulb** to preview it, and **Reset colours** to go back. Changes apply immediately, even while syncing.
+
+**Sensitivity** controls how easily the music reaches the brighter colours; the middle setting is the original behaviour.
 
 | Music | Bulb |
 |---|---|
@@ -17,7 +24,9 @@ These are the defaults. Every row can be changed in the app under **Light colour
 | Sudden bass kick | Red flash, 100% |
 | Paused or silent for 1.2 s | Natural white (4200 K), 100% |
 
-Colours step up instantly and fall back one tier at a time, so the light rises with the music and settles smoothly. When you stop syncing, the bulb returns to normal white.
+Colours step up instantly and fall back one tier at a time, so the light rises with the music and settles smoothly. When you stop syncing, the bulb returns to the "paused" light.
+
+**Reset all settings** at the bottom of the screen puts everything — bulb IP, delay, sensitivity, mode, fixed colour and all colours — back to how it was on install.
 
 ## Install
 
@@ -55,9 +64,10 @@ Release builds are signed only if `~/.android-keystores/wizmusicsync.properties`
 ## How it works
 
 - `LightEngine.kt` — the audio analysis: RMS level, 35–160 Hz bass energy, rolling averages, colour tiers, bass-drop detection and idle detection, computed on 1024-sample chunks at 48 kHz.
-- `LightTheme.kt` — the colour for each state, with the defaults above.
+- `LightTheme.kt` — the colour or white for each state, with the defaults above.
 - `SyncService.kt` — foreground service that captures media audio, runs the engine and sends `setPilot` UDP commands, delayed by the speaker-delay setting.
-- `WizBulb.kt` — WiZ UDP payloads, bulb discovery (broadcast `registration`/`getPilot`, then `getSystemConfig` for the model) and saving the colour theme.
-- `MainActivity.kt` — the settings screen.
+- `WizBulb.kt` — WiZ UDP payloads, bulb discovery (broadcast `registration`/`getPilot`, then `getSystemConfig` for the model) and all saved settings.
+- `ColorWheelView.kt`, `LightPickerView.kt` — the colour wheel and the colour/white picker.
+- `MainActivity.kt` — the settings screen and the two modes.
 
 No third-party libraries.

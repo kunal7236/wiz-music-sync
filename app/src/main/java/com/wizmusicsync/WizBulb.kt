@@ -2,12 +2,14 @@ package com.wizmusicsync
 
 import android.content.Context
 import android.net.ConnectivityManager
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.SocketTimeoutException
+import kotlin.math.pow
 
 /** WiZ local UDP API (port 38899): command payloads, one-off sends and bulb discovery. */
 object WizBulb {
@@ -15,21 +17,19 @@ object WizBulb {
 
     data class Found(val ip: String, val mac: String, val model: String?)
 
-    fun pilot(color: LightColor): String = setPilot(
-        JSONObject()
-            .put("r", color.r)
-            .put("g", color.g)
-            .put("b", color.b)
-            .put("c", 0)
-            .put("w", 0)
-    , color.dimming)
-
-    /** Clean natural white using the bulb's dedicated white diodes. */
-    fun white(light: WhiteLight): String = setPilot(JSONObject().put("temp", light.temp), light.dimming)
-
-    private fun setPilot(params: JSONObject, dimming: Int): String {
+    fun payload(light: BulbLight): String {
+        val params = when (light) {
+            is BulbLight.Rgb -> JSONObject()
+                .put("r", light.r)
+                .put("g", light.g)
+                .put("b", light.b)
+                .put("c", 0)
+                .put("w", 0)
+            // Clean natural white using the bulb's dedicated white diodes
+            is BulbLight.White -> JSONObject().put("temp", light.temp)
+        }
         params.put("state", true)
-            .put("dimming", dimming.coerceIn(10, 100))
+            .put("dimming", light.dimming.coerceIn(10, 100))
             .put("speed", 100)
         return JSONObject().put("id", 1).put("method", "setPilot").put("params", params).toString()
     }
@@ -124,46 +124,115 @@ object WizBulb {
         if (mac.length == 12) mac.chunked(2).joinToString(":").uppercase() else mac
 }
 
-/** Persists the user's [LightTheme]; [current] is read live by the sync engine. */
-object ThemeStore {
-    @Volatile var current: LightTheme = LightTheme.DEFAULT
+/**
+ * Every user setting, persisted in SharedPreferences. The @Volatile fields are read live by the
+ * sync service, so edits apply while syncing.
+ */
+object Settings {
+    const val DEFAULT_BULB_IP = "192.168.0.106"
+    const val DEFAULT_SENSITIVITY = 50
+    val DEFAULT_FIXED_LIGHT: BulbLight = BulbLight.White(4200, 100)
+
+    @Volatile var theme: LightTheme = LightTheme.DEFAULT
+        private set
+    /** Holds every bulb command back by this much so the light lines up with a lagging speaker. */
+    @Volatile var delayMs = 0
+        private set
+    /** 0-100; 50 is the original script. */
+    @Volatile var sensitivity = DEFAULT_SENSITIVITY
+        private set
+    var bulbIp = DEFAULT_BULB_IP
+        private set
+    var fixedMode = false
+        private set
+    var fixedLight: BulbLight = DEFAULT_FIXED_LIGHT
         private set
 
-    private const val KEY = "theme"
+    /** Level multiplier for the engine: 0.5x at 0, 1x at 50, 2x at 100. */
+    val gain: Double get() = 2.0.pow((sensitivity - 50) / 50.0)
 
     fun load(context: Context) {
-        val json = prefs(context).getString(KEY, null) ?: return
-        current = try {
-            val o = JSONObject(json)
-            val tiers = o.getJSONArray("tiers")
-            LightTheme(
-                tiers = List(4) { color(tiers.getJSONObject(it)) },
-                drop = color(o.getJSONObject("drop")),
-                idle = o.getJSONObject("idle").let { WhiteLight(it.getInt("temp"), it.getInt("dimming")) },
-            )
-        } catch (_: Exception) {
-            LightTheme.DEFAULT
-        }
+        val p = prefs(context)
+        bulbIp = p.getString("bulbIp", DEFAULT_BULB_IP) ?: DEFAULT_BULB_IP
+        delayMs = p.getInt("delayMs", 0)
+        sensitivity = p.getInt("sensitivity", DEFAULT_SENSITIVITY)
+        fixedMode = p.getBoolean("fixedMode", false)
+        fixedLight = p.getString("fixedLight", null)?.let { json -> parseOr(DEFAULT_FIXED_LIGHT) { light(JSONObject(json)) } }
+            ?: DEFAULT_FIXED_LIGHT
+        theme = p.getString("theme", null)?.let { json ->
+            parseOr(LightTheme.DEFAULT) {
+                val o = JSONObject(json)
+                val tiers = o.getJSONArray("tiers")
+                LightTheme(
+                    tiers = List(4) { light(tiers.getJSONObject(it)) },
+                    drop = light(o.getJSONObject("drop")),
+                    idle = light(o.getJSONObject("idle")),
+                )
+            }
+        } ?: LightTheme.DEFAULT
     }
 
-    fun save(context: Context, theme: LightTheme) {
-        current = theme
+    fun setBulbIp(context: Context, ip: String) {
+        bulbIp = ip
+        prefs(context).edit().putString("bulbIp", ip).apply()
+    }
+
+    fun setDelayMs(context: Context, ms: Int) {
+        delayMs = ms
+        prefs(context).edit().putInt("delayMs", ms).apply()
+    }
+
+    fun setSensitivity(context: Context, value: Int) {
+        sensitivity = value
+        prefs(context).edit().putInt("sensitivity", value).apply()
+    }
+
+    fun setFixedMode(context: Context, fixed: Boolean) {
+        fixedMode = fixed
+        prefs(context).edit().putBoolean("fixedMode", fixed).apply()
+    }
+
+    fun setFixedLight(context: Context, light: BulbLight) {
+        fixedLight = light
+        prefs(context).edit().putString("fixedLight", json(light).toString()).apply()
+    }
+
+    fun setTheme(context: Context, value: LightTheme) {
+        theme = value
         val o = JSONObject()
-            .put("tiers", org.json.JSONArray(theme.tiers.map { json(it) }))
-            .put("drop", json(theme.drop))
-            .put("idle", JSONObject().put("temp", theme.idle.temp).put("dimming", theme.idle.dimming))
-        prefs(context).edit().putString(KEY, o.toString()).apply()
+            .put("tiers", JSONArray(value.tiers.map { json(it) }))
+            .put("drop", json(value.drop))
+            .put("idle", json(value.idle))
+        prefs(context).edit().putString("theme", o.toString()).apply()
     }
 
-    fun reset(context: Context) {
-        current = LightTheme.DEFAULT
-        prefs(context).edit().remove(KEY).apply()
+    fun resetTheme(context: Context) {
+        theme = LightTheme.DEFAULT
+        prefs(context).edit().remove("theme").apply()
+    }
+
+    /** Back to exactly how the app was on first install. */
+    fun resetAll(context: Context) {
+        prefs(context).edit().clear().apply()
+        load(context)
     }
 
     private fun prefs(context: Context) = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
-    private fun color(o: JSONObject) = LightColor(o.getInt("r"), o.getInt("g"), o.getInt("b"), o.getInt("dimming"))
+    private inline fun <T> parseOr(fallback: T, parse: () -> T): T =
+        try {
+            parse()
+        } catch (_: Exception) {
+            fallback
+        }
 
-    private fun json(c: LightColor) =
-        JSONObject().put("r", c.r).put("g", c.g).put("b", c.b).put("dimming", c.dimming)
+    /** Reads {"temp","dimming"} as white, {"r","g","b","dimming"} as colour (also the v1.1 format). */
+    private fun light(o: JSONObject): BulbLight =
+        if (o.has("temp")) BulbLight.White(o.getInt("temp"), o.getInt("dimming"))
+        else BulbLight.Rgb(o.getInt("r"), o.getInt("g"), o.getInt("b"), o.getInt("dimming"))
+
+    private fun json(light: BulbLight): JSONObject = when (light) {
+        is BulbLight.Rgb -> JSONObject().put("r", light.r).put("g", light.g).put("b", light.b)
+        is BulbLight.White -> JSONObject().put("temp", light.temp)
+    }.put("dimming", light.dimming)
 }

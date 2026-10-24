@@ -40,6 +40,8 @@ class SyncService : Service() {
         const val EXTRA_RESULT_CODE = "resultCode"
         const val EXTRA_RESULT_DATA = "resultData"
         const val EXTRA_BULB_IP = "bulbIp"
+        /** With ACTION_STOP: leave the bulb as it is instead of restoring the idle light. */
+        const val EXTRA_SKIP_RESTORE = "skipRestore"
 
         const val SAMPLE_RATE = 48000
         const val CHUNK = 1024
@@ -53,9 +55,9 @@ class SyncService : Service() {
             private set
         @Volatile var status = "Stopped"
             private set
-        /** Holds every bulb command back by this much so the light lines up with a lagging speaker. */
-        @Volatile var delayMs = 0
     }
+
+    private var skipRestore = false
 
     private var projection: MediaProjection? = null
     private var record: AudioRecord? = null
@@ -71,6 +73,7 @@ class SyncService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent == null || intent.action == ACTION_STOP) {
+            skipRestore = intent?.getBooleanExtra(EXTRA_SKIP_RESTORE, false) == true
             stopSelf()
             return START_NOT_STICKY
         }
@@ -83,7 +86,7 @@ class SyncService : Service() {
             @Suppress("DEPRECATION") intent.getParcelableExtra(EXTRA_RESULT_DATA)
         }
         bulbIp = intent.getStringExtra(EXTRA_BULB_IP).orEmpty()
-        ThemeStore.load(this)
+        Settings.load(this)
 
         // Must be in the foreground before the MediaProjection token is redeemed (Android 14+)
         startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
@@ -141,7 +144,7 @@ class SyncService : Service() {
 
         capturing = true
         captureThread = Thread({
-            val engine = LightEngine(SAMPLE_RATE, nowSeconds()) { ThemeStore.current }
+            val engine = LightEngine(SAMPLE_RATE, nowSeconds(), { Settings.theme }, { Settings.gain })
             val buffer = ShortArray(CHUNK * CHANNELS)
             rec.startRecording()
             while (capturing) {
@@ -160,7 +163,7 @@ class SyncService : Service() {
                 status = engine.status
                 if (command != null) {
                     try {
-                        sender?.schedule({ send(command) }, delayMs.toLong(), TimeUnit.MILLISECONDS)
+                        sender?.schedule({ send(command) }, Settings.delayMs.toLong(), TimeUnit.MILLISECONDS)
                     } catch (_: java.util.concurrent.RejectedExecutionException) {
                         // service is shutting down
                     }
@@ -172,16 +175,11 @@ class SyncService : Service() {
     private fun nowSeconds() = System.nanoTime() / 1e9
 
     // ----------------- UDP DISPATCH -----------------
-    private fun payload(command: LightEngine.Command): String = when (command) {
-        is LightEngine.Command.Pilot -> WizBulb.pilot(LightColor(command.r, command.g, command.b, command.dimming))
-        is LightEngine.Command.White -> WizBulb.white(WhiteLight(command.temp, command.dimming))
-    }
-
     /** Runs on the sender thread only. */
-    private fun send(command: LightEngine.Command) {
+    private fun send(light: BulbLight) {
         try {
             val address = bulbAddress ?: InetAddress.getByName(bulbIp).also { bulbAddress = it }
-            val bytes = payload(command).toByteArray()
+            val bytes = WizBulb.payload(light).toByteArray()
             socket?.send(DatagramPacket(bytes, bytes.size, address, WizBulb.PORT))
         } catch (_: Exception) {
         }
@@ -230,10 +228,10 @@ class SyncService : Service() {
         projection?.stop()
         projection = null
 
-        // Drop any delayed colour commands, then restore the idle white light
+        // Drop any delayed colour commands, then restore the idle light (unless switching to a fixed colour)
         sender?.let { executor ->
-            val idle = ThemeStore.current.idle
-            executor.execute { send(LightEngine.Command.White(idle.temp, idle.dimming)) }
+            val idle = Settings.theme.idle
+            if (!skipRestore) executor.execute { send(idle) }
             executor.shutdown()
             executor.awaitTermination(1, TimeUnit.SECONDS)
         }
