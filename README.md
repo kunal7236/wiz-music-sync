@@ -9,6 +9,16 @@ It captures the audio other apps play (Android's AudioPlaybackCapture), analyses
 - **Music sync** — the bulb follows the music, as described below.
 - **Fixed colour** — pick any colour or white on a colour wheel and the bulb stays on it, whatever is playing. The bulb updates live as you drag. Audio capture is fully off in this mode.
 
+## Power and schedules
+
+**On / Off** buttons switch the bulb directly (On brings back whatever it showed last). Off also stops music sync.
+
+**Schedules** turn the bulb on or off automatically:
+- **After a delay** — e.g. off in 30 minutes, as a sleep timer. Runs once.
+- **At a time** — e.g. on at 07:00 on weekdays. Once, every day, weekdays or chosen days; repeating schedules can be paused with their switch.
+
+Schedules run on your phone, not on the bulb, so the phone must be on the bulb's Wi-Fi when one is due. They survive a restart; one-off schedules that came due while the phone was off are skipped. If a schedule can't reach the bulb you get a notification. For reliable timing, set the app's battery usage to *Unrestricted* — the app shows a shortcut when that's needed.
+
 ## How the lights behave in Music sync
 
 These are the defaults. Every row can be changed in the app under **Light colours**: tap a row to choose a colour on the wheel or a white (warm, neutral, daylight or any warmth), set its brightness, use **Try on bulb** to preview it, and **Reset colours** to go back. Changes apply immediately, even while syncing.
@@ -26,7 +36,7 @@ These are the defaults. Every row can be changed in the app under **Light colour
 
 Colours step up instantly and fall back one tier at a time, so the light rises with the music and settles smoothly. When you stop syncing, the bulb returns to the "paused" light.
 
-**Reset all settings** at the bottom of the screen puts everything — bulb IP, delay, sensitivity, mode, fixed colour and all colours — back to how it was on install.
+**Reset all settings** at the bottom of the screen puts everything — bulb IP, delay, sensitivity, mode, fixed colour, all colours and all schedules — back to how it was on install.
 
 ## Install
 
@@ -68,6 +78,7 @@ Release builds are signed only if `~/.android-keystores/wizmusicsync.properties`
 - `SyncService.kt` — foreground service that captures media audio, runs the engine and sends `setPilot` UDP commands, delayed by the speaker-delay setting.
 - `WizBulb.kt` — WiZ UDP payloads, bulb discovery (broadcast `registration`/`getPilot`, then `getSystemConfig` for the model) and all saved settings.
 - `ColorWheelView.kt`, `LightPickerView.kt` — the colour wheel and the colour/white picker.
+- `Schedule.kt`, `Scheduler.kt`, `ScheduleDialog.kt` — power schedules: next-run calculation (unit-tested), exact alarms re-armed after reboot, the receiver that switches the bulb, and the add-schedule dialog.
 - `MainActivity.kt` — the settings screen and the two modes.
 
 No third-party libraries.

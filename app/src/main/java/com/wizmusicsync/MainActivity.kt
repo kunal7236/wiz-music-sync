@@ -9,10 +9,12 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.media.projection.MediaProjectionConfig
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
 import android.text.Editable
 import android.text.TextWatcher
@@ -21,9 +23,11 @@ import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
+import android.widget.ImageButton
 import android.widget.LinearLayout
 import android.widget.RadioGroup
 import android.widget.SeekBar
+import android.widget.Switch
 import android.widget.TextView
 import java.util.concurrent.Executors
 import kotlin.math.max
@@ -35,6 +39,9 @@ class MainActivity : Activity() {
         private const val DELAY_STEP_MS = 10
         private const val REQUEST_PERMISSIONS = 1
         private const val REQUEST_PROJECTION = 2
+        private const val REQUEST_NOTIFICATIONS = 3
+        /** The schedule list is re-read every this many UI ticks (200 ms each) to show fired timers. */
+        private const val SCHEDULE_REFRESH_TICKS = 25
         /** Minimum gap between bulb updates while dragging the fixed-colour picker. */
         private const val FIXED_PUSH_INTERVAL_MS = 100L
 
@@ -66,15 +73,24 @@ class MainActivity : Activity() {
     private lateinit var colorRows: LinearLayout
     private lateinit var toggle: Button
     private lateinit var statusView: TextView
+    private lateinit var powerState: TextView
+    private lateinit var scheduleRows: LinearLayout
+    private lateinit var scheduleWarning: View
+    private lateinit var scheduleWarningText: TextView
+    private lateinit var scheduleWarningFix: Button
     private var message: String? = null
     private var scanning = false
     /** True while views are being filled from [Settings], so their listeners don't write back. */
     private var binding = false
+    private var shownSchedules: List<Schedule>? = null
+    private var ticks = 0
 
     private val ui = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
             updateUi()
+            // Timers fire in the background; pick up removed/finished ones while the screen is open
+            if (++ticks % SCHEDULE_REFRESH_TICKS == 0) refreshScheduleRows()
             ui.postDelayed(this, 200)
         }
     }
@@ -107,8 +123,25 @@ class MainActivity : Activity() {
         colorRows = findViewById(R.id.colorRows)
         toggle = findViewById(R.id.toggle)
         statusView = findViewById(R.id.status)
+        powerState = findViewById(R.id.powerState)
+        scheduleRows = findViewById(R.id.scheduleRows)
+        scheduleWarning = findViewById(R.id.scheduleWarning)
+        scheduleWarningText = findViewById(R.id.scheduleWarningText)
+        scheduleWarningFix = findViewById(R.id.scheduleWarningFix)
 
         Settings.load(this)
+
+        findViewById<Button>(R.id.powerOn).setOnClickListener { setPower(true) }
+        findViewById<Button>(R.id.powerOff).setOnClickListener { setPower(false) }
+        findViewById<Button>(R.id.addSchedule).setOnClickListener {
+            showAddScheduleDialog { schedule ->
+                val saved = Scheduler.add(this, schedule)
+                val action = if (saved.turnOn) "on" else "off"
+                message = saved.nextTrigger()?.let { "The bulb will turn $action at ${formatTime(this, it)}." }
+                refreshScheduleRows()
+                askForNotifications()
+            }
+        }
 
         bulbIp.addTextChangedListener(object : TextWatcher {
             override fun afterTextChanged(s: Editable) {
@@ -168,6 +201,8 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         ui.post(refresh)
+        refreshPowerState()
+        refreshScheduleRows()
     }
 
     override fun onPause() {
@@ -194,6 +229,135 @@ class MainActivity : Activity() {
         binding = false
         showSections()
         refreshColorRows()
+        refreshScheduleRows()
+    }
+
+    // ----------------- POWER -----------------
+    private fun setPower(on: Boolean) {
+        val ip = currentIp()
+        if (ip.isEmpty()) {
+            message = "Enter the bulb's IP address first, or tap Scan."
+            return
+        }
+        // Off ends the light show too, so the next beat doesn't switch the bulb back on
+        val stopSync = !on && SyncService.isRunning
+        if (stopSync) SyncService.stopWithoutRestore()
+        message = if (on) "Turning the bulb on..." else "Turning the bulb off..."
+        io.execute {
+            if (stopSync) Thread.sleep(600)
+            val ok = WizBulb.setPower(ip, on, timeoutMs = 4000)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                message = if (ok) null else "The bulb didn't answer. Check the IP and that this device is on the bulb's Wi-Fi."
+                if (ok) showPowerState(on)
+            }
+        }
+    }
+
+    private fun refreshPowerState() {
+        val ip = currentIp()
+        if (ip.isEmpty()) return
+        io.execute {
+            val on = WizBulb.isOn(ip)
+            runOnUiThread { if (!isFinishing && !isDestroyed) showPowerState(on) }
+        }
+    }
+
+    private fun showPowerState(on: Boolean?) {
+        powerState.text = when (on) {
+            true -> "Bulb is on"
+            false -> "Bulb is off"
+            null -> "Bulb not reachable"
+        }
+    }
+
+    // ----------------- SCHEDULES -----------------
+    private fun refreshScheduleRows() {
+        val schedules = Scheduler.all(this)
+            .sortedWith(compareBy<Schedule> { !it.enabled }.thenBy { it.nextTrigger() ?: Long.MAX_VALUE })
+        updateScheduleWarning(schedules.any { it.enabled })
+        if (schedules == shownSchedules) return
+        shownSchedules = schedules
+        scheduleRows.removeAllViews()
+
+        for (schedule in schedules) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(6), 0, dp(6))
+                alpha = if (schedule.enabled) 1f else 0.5f
+            }
+            row.addView(LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                addView(TextView(this@MainActivity).apply {
+                    text = scheduleTitle(this@MainActivity, schedule)
+                    setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Medium)
+                })
+                addView(TextView(this@MainActivity).apply {
+                    text = scheduleDetail(schedule)
+                    setTextAppearance(android.R.style.TextAppearance_DeviceDefault_Small)
+                })
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+
+            // Timers run once and are simply deleted; time-of-day schedules can be paused
+            if (!schedule.isTimer) {
+                row.addView(Switch(this).apply {
+                    isChecked = schedule.enabled
+                    contentDescription = "Enable schedule"
+                    setOnCheckedChangeListener { _, checked ->
+                        Scheduler.update(this@MainActivity, schedule.copy(enabled = checked))
+                        refreshScheduleRows()
+                    }
+                })
+            }
+            row.addView(ImageButton(this).apply {
+                setImageResource(android.R.drawable.ic_menu_delete)
+                background = null
+                contentDescription = "Delete schedule"
+                setOnClickListener {
+                    Scheduler.delete(this@MainActivity, schedule.id)
+                    refreshScheduleRows()
+                }
+            })
+            scheduleRows.addView(row)
+        }
+    }
+
+    /** Explains (with a fix button) anything that could make schedules fire late or not at all. */
+    private fun updateScheduleWarning(hasActive: Boolean) {
+        val power = getSystemService(PowerManager::class.java)
+        when {
+            !hasActive -> scheduleWarning.visibility = View.GONE
+            !Scheduler.canFireOnTime(this) && Build.VERSION.SDK_INT >= 31 -> {
+                scheduleWarningText.text = "Allow \"Alarms & reminders\" so schedules run on the minute."
+                scheduleWarningFix.text = "Allow"
+                scheduleWarningFix.setOnClickListener {
+                    startActivity(
+                        Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:$packageName"))
+                    )
+                }
+                scheduleWarning.visibility = View.VISIBLE
+            }
+            !power.isIgnoringBatteryOptimizations(packageName) -> {
+                scheduleWarningText.text = "Battery saving can delay or skip schedules. " +
+                    "Set this app to \"Unrestricted\" / \"Don't optimise\" in battery settings."
+                scheduleWarningFix.text = "Battery settings"
+                scheduleWarningFix.setOnClickListener {
+                    startActivity(Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                }
+                scheduleWarning.visibility = View.VISIBLE
+            }
+            else -> scheduleWarning.visibility = View.GONE
+        }
+    }
+
+    /** Needed so a schedule that can't reach the bulb can say so. */
+    private fun askForNotifications() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_NOTIFICATIONS)
+        }
     }
 
     private fun showSections() {

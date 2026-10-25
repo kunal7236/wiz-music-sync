@@ -45,6 +45,39 @@ object WizBulb {
         }
     }
 
+    /** Asks the bulb whether it is on; null if it doesn't answer within [timeoutMs]. Blocking. */
+    fun isOn(ip: String, timeoutMs: Int = 700): Boolean? = try {
+        DatagramSocket().use { socket ->
+            socket.soTimeout = timeoutMs
+            val probe = """{"method":"getPilot","params":{}}""".toByteArray()
+            socket.send(DatagramPacket(probe, probe.size, InetAddress.getByName(ip), PORT))
+            val buffer = ByteArray(2048)
+            val packet = DatagramPacket(buffer, buffer.size)
+            socket.receive(packet)
+            JSONObject(String(packet.data, 0, packet.length)).getJSONObject("result").getBoolean("state")
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * Switches the bulb on (back to whatever it last showed) or off, retrying until the bulb
+     * confirms or [timeoutMs] runs out — Wi-Fi can take a few seconds to wake after the phone sleeps.
+     * Blocking: never call on the main thread.
+     * @return true once the bulb reports the requested state
+     */
+    fun setPower(ip: String, on: Boolean, timeoutMs: Long = 8000): Boolean {
+        val payload = JSONObject().put("id", 1).put("method", "setState")
+            .put("params", JSONObject().put("state", on)).toString()
+        val end = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < end) {
+            sendOnce(ip, payload)
+            if (isOn(ip) == on) return true
+            Thread.sleep(300)
+        }
+        return false
+    }
+
     /**
      * Broadcasts WiZ discovery messages on the current network and collects the bulbs that answer.
      * Blocking for about [listenMs]: never call on the main thread.
@@ -211,8 +244,9 @@ object Settings {
         prefs(context).edit().remove("theme").apply()
     }
 
-    /** Back to exactly how the app was on first install. */
+    /** Back to exactly how the app was on first install, schedules included. */
     fun resetAll(context: Context) {
+        Scheduler.clearAll(context)
         prefs(context).edit().clear().apply()
         load(context)
     }

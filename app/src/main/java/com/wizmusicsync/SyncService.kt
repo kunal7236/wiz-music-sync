@@ -55,6 +55,21 @@ class SyncService : Service() {
             private set
         @Volatile var status = "Stopped"
             private set
+
+        @Volatile private var instance: SyncService? = null
+
+        /**
+         * Stops a running sync from inside the app process (power-off button or schedule) without
+         * a service start, which Android may block from the background. Leaves the bulb as it is.
+         */
+        fun stopWithoutRestore() {
+            Handler(Looper.getMainLooper()).post {
+                instance?.let {
+                    it.skipRestore = true
+                    it.stopSelf()
+                }
+            }
+        }
     }
 
     private var skipRestore = false
@@ -117,6 +132,7 @@ class SyncService : Service() {
         }
 
         startCapture(mp)
+        instance = this
         isRunning = true
         status = "Connecting to WiZ bulb at $bulbIp..."
         return START_NOT_STICKY
@@ -211,6 +227,7 @@ class SyncService : Service() {
     }
 
     override fun onDestroy() {
+        instance = null
         isRunning = false
         status = "Stopped"
 
