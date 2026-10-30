@@ -4,6 +4,8 @@ An Android app that makes a WiZ Wi-Fi bulb react to whatever music is playing on
 
 It captures the audio other apps play (Android's AudioPlaybackCapture), analyses it, and sends colour commands straight to the bulb over your local Wi-Fi. Music keeps playing to your Bluetooth speaker or headphones as normal.
 
+There is also a **Windows 11 app** with the same features — see [Windows app](#windows-app) below.
+
 ## Two modes
 
 - **Music sync** — the bulb follows the music, as described below.
@@ -84,3 +86,30 @@ Release builds are signed only if `~/.android-keystores/wizmusicsync.properties`
 - `MainActivity.kt` — the settings screen and the two modes.
 
 No third-party libraries.
+
+## Windows app
+
+`windows/` holds a Windows 10/11 version with the same features: Music sync and Fixed colour modes, the colour wheel, editable colours, speaker delay, sensitivity, keep-colour-on-pause, Scan and auto-scan, On/Off and schedules.
+
+What's different on Windows:
+- **No permission prompts.** It captures whatever the PC is playing directly (WASAPI loopback of the default output) and follows you when you switch speakers or headphones.
+- **Runs in the system tray.** Closing the window keeps sync and schedules running; the tray menu has Start/Stop sync, Turn bulb on/off and Exit. Optional **Start with Windows** opens it hidden in the tray at sign-in.
+- **Finds the bulb on first launch**, so there is no IP to type.
+- Schedules run while the app is open or in the tray. If the PC was asleep at a schedule's time, it is skipped rather than run late.
+- Settings live in `%APPDATA%\WizMusicSync\settings.json`.
+
+### Install
+
+Download `WizMusicSync-Windows.exe` from the latest release and run it — a single self-contained file, nothing else to install. It isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
+
+### Build
+
+Requires the .NET 10 SDK.
+
+```bash
+dotnet test windows/WizMusicSync.Tests
+dotnet publish windows/WizMusicSync.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+```
+
+- `WizMusicSync.Core` — the light engine (a line-for-line port of the Android one, checked against the same Python reference), WiZ protocol, settings and schedule runner. Unit-tested in `WizMusicSync.Tests`.
+- `WizMusicSync.App` — WPF with the built-in Windows 11 (Fluent) theme: window, colour wheel, tray icon, audio capture.

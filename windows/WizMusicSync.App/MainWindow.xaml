@@ -1,0 +1,104 @@
+<Window x:Class="WizMusicSync.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:WizMusicSync.App"
+        Title="WiZ Music Sync"
+        Width="620" Height="880" MinWidth="480" MinHeight="420"
+        WindowStartupLocation="CenterScreen">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="24" MaxWidth="640">
+
+            <!-- ============ BULB ============ -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Heading}" Text="Bulb" />
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="BulbIp" VerticalContentAlignment="Center" ToolTip="Bulb IP address" />
+                        <Button x:Name="Scan" Grid.Column="1" Margin="8,0,0,0" MinWidth="90" Content="Scan" />
+                    </Grid>
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="PowerState" VerticalAlignment="Center" FontSize="14" Text="Bulb power" />
+                        <Button x:Name="PowerOn" Grid.Column="1" MinWidth="70" Content="On" />
+                        <Button x:Name="PowerOff" Grid.Column="2" Margin="8,0,0,0" MinWidth="70" Content="Off" />
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- ============ MODE ============ -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Heading}" Text="Mode" />
+                    <StackPanel Orientation="Horizontal">
+                        <RadioButton x:Name="ModeSync" GroupName="Mode" Margin="0,0,24,0" Content="Music sync" />
+                        <RadioButton x:Name="ModeFixed" GroupName="Mode" Content="Fixed colour" />
+                    </StackPanel>
+
+                    <!-- Fixed colour -->
+                    <StackPanel x:Name="FixedPanel" Margin="0,12,0,0">
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="The bulb stays on this colour and ignores the music. Changes show on the bulb as you pick." />
+                        <local:LightPicker x:Name="FixedPicker" Margin="0,12,0,0" />
+                    </StackPanel>
+
+                    <!-- Music sync -->
+                    <StackPanel x:Name="SyncPanel">
+                        <TextBlock x:Name="DelayLabel" Style="{StaticResource Label}" />
+                        <Slider x:Name="Delay" Minimum="0" Maximum="500" TickFrequency="10" IsSnapToTickEnabled="True" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Raise this if the lights change before you hear the beat on a Bluetooth speaker. Works while syncing." />
+
+                        <TextBlock x:Name="SensitivityLabel" Style="{StaticResource Label}" />
+                        <Slider x:Name="Sensitivity" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="Higher reaches the brighter colours more easily; lower keeps the light calmer." />
+
+                        <CheckBox x:Name="KeepColour" Margin="0,16,0,0" Content="Keep the colour when music pauses" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="On: the bulb stays on its last colour until the music resumes. Off: it switches to the &quot;Paused or silent&quot; light." />
+
+                        <TextBlock Style="{StaticResource Label}" Margin="0,20,0,0" FontWeight="SemiBold" Text="Light colours" />
+                        <TextBlock Style="{StaticResource Hint}" Text="Click a row to change it. Changes apply straight away, even while syncing." />
+                        <StackPanel x:Name="ColorRows" Margin="0,8,0,0" />
+                        <Button x:Name="ResetColors" HorizontalAlignment="Left" Margin="0,4,0,0" Content="Reset colours" />
+
+                        <Button x:Name="ToggleSyncButton" Margin="0,20,0,0" Padding="0,8" HorizontalAlignment="Stretch"
+                                Style="{DynamicResource AccentButtonStyle}" />
+                    </StackPanel>
+                </StackPanel>
+            </Border>
+
+            <!-- ============ SCHEDULES ============ -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Heading}" Text="Schedules" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Turn the bulb on or off after a delay or at a set time. Schedules run while the app is open or in the tray; turn on Start with Windows below to keep them running." />
+                    <StackPanel x:Name="ScheduleRows" Margin="0,8,0,0" />
+                    <Button x:Name="AddSchedule" HorizontalAlignment="Left" Margin="0,8,0,0" Content="+ Add schedule" />
+                </StackPanel>
+            </Border>
+
+            <TextBlock x:Name="StatusText" Margin="4,4,4,12" FontFamily="Consolas" TextWrapping="Wrap" />
+
+            <!-- ============ APP ============ -->
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <CheckBox x:Name="StartWithWindows" Content="Start with Windows (in the tray)" />
+                    <TextBlock Style="{StaticResource Hint}"
+                               Text="Closing the window keeps the app running in the tray; use Exit in the tray menu to quit." />
+                    <Button x:Name="ResetAll" HorizontalAlignment="Left" Margin="0,12,0,0" Content="Reset all settings" />
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Window>

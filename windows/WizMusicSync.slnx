@@ -1,0 +1,5 @@
+<Solution>
+  <Project Path="WizMusicSync.App/WizMusicSync.App.csproj" />
+  <Project Path="WizMusicSync.Core/WizMusicSync.Core.csproj" />
+  <Project Path="WizMusicSync.Tests/WizMusicSync.Tests.csproj" />
+</Solution>
