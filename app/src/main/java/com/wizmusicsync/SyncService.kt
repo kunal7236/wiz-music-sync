@@ -160,7 +160,9 @@ class SyncService : Service() {
 
         capturing = true
         captureThread = Thread({
-            val engine = LightEngine(SAMPLE_RATE, nowSeconds(), { Settings.theme }, { Settings.gain })
+            val engine = LightEngine(
+                SAMPLE_RATE, nowSeconds(), { Settings.theme }, { Settings.gain }, { !Settings.keepColourOnPause }
+            )
             val buffer = ShortArray(CHUNK * CHANNELS)
             rec.startRecording()
             while (capturing) {

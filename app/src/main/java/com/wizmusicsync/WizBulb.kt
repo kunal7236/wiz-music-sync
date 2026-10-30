@@ -174,6 +174,9 @@ object Settings {
     /** 0-100; 50 is the original script. */
     @Volatile var sensitivity = DEFAULT_SENSITIVITY
         private set
+    /** While syncing, a music pause keeps the current colour instead of switching to the idle light. */
+    @Volatile var keepColourOnPause = true
+        private set
     var bulbIp = DEFAULT_BULB_IP
         private set
     var fixedMode = false
@@ -189,6 +192,7 @@ object Settings {
         bulbIp = p.getString("bulbIp", DEFAULT_BULB_IP) ?: DEFAULT_BULB_IP
         delayMs = p.getInt("delayMs", 0)
         sensitivity = p.getInt("sensitivity", DEFAULT_SENSITIVITY)
+        keepColourOnPause = p.getBoolean("keepColourOnPause", true)
         fixedMode = p.getBoolean("fixedMode", false)
         fixedLight = p.getString("fixedLight", null)?.let { json -> parseOr(DEFAULT_FIXED_LIGHT) { light(JSONObject(json)) } }
             ?: DEFAULT_FIXED_LIGHT
@@ -218,6 +222,11 @@ object Settings {
     fun setSensitivity(context: Context, value: Int) {
         sensitivity = value
         prefs(context).edit().putInt("sensitivity", value).apply()
+    }
+
+    fun setKeepColourOnPause(context: Context, keep: Boolean) {
+        keepColourOnPause = keep
+        prefs(context).edit().putBoolean("keepColourOnPause", keep).apply()
     }
 
     fun setFixedMode(context: Context, fixed: Boolean) {

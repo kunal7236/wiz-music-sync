@@ -25,6 +25,8 @@ These are the defaults. Every row can be changed in the app under **Light colour
 
 **Sensitivity** controls how easily the music reaches the brighter colours; the middle setting is the original behaviour.
 
+**Keep the colour when music pauses** (on by default): the bulb stays on the colour it was showing until the music resumes. Turn it off to switch to the "Paused or silent" light instead.
+
 | Music | Bulb |
 |---|---|
 | Quiet / background | Blue, 60% |
@@ -32,7 +34,7 @@ These are the defaults. Every row can be changed in the app under **Light colour
 | Synths / drive | Amber, 85% |
 | High intensity | Magenta, 95% |
 | Sudden bass kick | Red flash, 100% |
-| Paused or silent for 1.2 s | Natural white (4200 K), 100% |
+| Paused or silent for 1.2 s (only when "Keep the colour" is off) | Natural white (4200 K), 100% |
 
 Colours step up instantly and fall back one tier at a time, so the light rises with the music and settles smoothly. When you stop syncing, the bulb returns to the "paused" light.
 

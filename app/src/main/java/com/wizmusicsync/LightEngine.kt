@@ -14,12 +14,15 @@ import kotlin.math.sqrt
  *
  * @param theme read on every chunk, so colour edits apply while syncing
  * @param sensitivity multiplier on the music level before picking a tier; 1.0 is the original script
+ * @param idleOnPause true (the original script) switches to the theme's idle light when the music
+ *   pauses; false freezes the bulb on the colour it was showing until the music resumes
  */
 class LightEngine(
     private val rate: Int,
     startTime: Double,
     private val theme: () -> LightTheme = { LightTheme.DEFAULT },
     private val sensitivity: () -> Double = { 1.0 },
+    private val idleOnPause: () -> Boolean = { true },
 ) {
 
     companion object {
@@ -60,6 +63,15 @@ class LightEngine(
         // ----------------- SILENCE / IDLE DETECTION -----------------
         // If audio is paused or muted (RMS < 35 for 1.2 continuous seconds)
         if (rms < 35.0) {
+            if (!idleOnPause()) {
+                // Keep mode: send nothing during silence, so the bulb holds the colour it had when the
+                // music stopped (analysing the silence would first step it down to the quiet colour)
+                if (now - silenceStartTime > 1.2 && !isCurrentlyIdle) {
+                    isCurrentlyIdle = true
+                    status = "[PAUSED] Keeping the last colour"
+                }
+                return null
+            }
             if (now - silenceStartTime > 1.2) {
                 if (!isCurrentlyIdle) {
                     isCurrentlyIdle = true

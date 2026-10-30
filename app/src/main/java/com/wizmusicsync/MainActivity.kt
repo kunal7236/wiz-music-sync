@@ -70,6 +70,7 @@ class MainActivity : Activity() {
     private lateinit var delay: SeekBar
     private lateinit var sensitivityLabel: TextView
     private lateinit var sensitivity: SeekBar
+    private lateinit var keepColourOnPause: Switch
     private lateinit var colorRows: LinearLayout
     private lateinit var toggle: Button
     private lateinit var statusView: TextView
@@ -120,6 +121,7 @@ class MainActivity : Activity() {
         delay = findViewById(R.id.delay)
         sensitivityLabel = findViewById(R.id.sensitivityLabel)
         sensitivity = findViewById(R.id.sensitivity)
+        keepColourOnPause = findViewById(R.id.keepColourOnPause)
         colorRows = findViewById(R.id.colorRows)
         toggle = findViewById(R.id.toggle)
         statusView = findViewById(R.id.status)
@@ -173,6 +175,9 @@ class MainActivity : Activity() {
             showSensitivity(value)
             if (!binding) Settings.setSensitivity(this, value)
         })
+        keepColourOnPause.setOnCheckedChangeListener { _, checked ->
+            if (!binding) Settings.setKeepColourOnPause(this, checked)
+        }
 
         findViewById<Button>(R.id.resetColors).setOnClickListener {
             AlertDialog.Builder(this)
@@ -226,6 +231,7 @@ class MainActivity : Activity() {
         showDelay(Settings.delayMs)
         sensitivity.progress = Settings.sensitivity
         showSensitivity(Settings.sensitivity)
+        keepColourOnPause.isChecked = Settings.keepColourOnPause
         binding = false
         showSections()
         refreshColorRows()
