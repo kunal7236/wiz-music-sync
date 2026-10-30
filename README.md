@@ -48,7 +48,7 @@ Requires Android 10 or newer, and the device must be on the same Wi-Fi network a
 
 ## Use
 
-1. Tap **Scan** to find WiZ bulbs on your Wi-Fi and pick yours, or type its IP address. The scan only runs when you tap the button.
+1. Tap **Scan** to find WiZ bulbs on your Wi-Fi and pick yours, or type its IP address. If the bulb later stops answering at that address (for example the router gave it a new one), the app scans by itself when you open it, press On/Off or start syncing: with one bulb on the network it switches to the new address automatically; with several it asks you to pick. Scheduled on/off does the same in the background.
 2. Tap **Start sync** and allow:
    - **Microphone → While using the app.** Android files audio capture under this permission; the app never opens the mic.
    - **Notifications → Allow.** Shows a notification with a **Stop** button while syncing.

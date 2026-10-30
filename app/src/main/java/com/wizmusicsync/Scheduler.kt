@@ -158,7 +158,17 @@ class ScheduleReceiver : BroadcastReceiver() {
                         SyncService.stopWithoutRestore()
                         Thread.sleep(600) // let the last queued colours go out before switching off
                     }
-                    val ok = WizBulb.setPower(Settings.bulbIp, schedule.turnOn)
+                    // Budget stays under ~10 s, the time Android allows a receiver to finish
+                    var ok = WizBulb.setPower(Settings.bulbIp, schedule.turnOn, timeoutMs = 5000)
+                    if (!ok) {
+                        // The bulb may have a new IP: if exactly one bulb answers a scan, switch to it
+                        val bulbs = WizBulb.discover(app, listenMs = 2000)
+                        val moved = bulbs.singleOrNull()?.ip?.takeIf { it != Settings.bulbIp }
+                        if (moved != null) {
+                            Settings.setBulbIp(app, moved)
+                            ok = WizBulb.setPower(moved, schedule.turnOn, timeoutMs = 2500)
+                        }
+                    }
                     Scheduler.afterFired(app, schedule)
                     if (!ok) notifyFailure(app, schedule)
                 }

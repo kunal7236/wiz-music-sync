@@ -84,6 +84,8 @@ class MainActivity : Activity() {
     /** True while views are being filled from [Settings], so their listeners don't write back. */
     private var binding = false
     private var shownSchedules: List<Schedule>? = null
+    /** IP the app already auto-scanned for on opening, so a bulb that's off isn't searched for repeatedly. */
+    private var autoScannedIp: String? = null
     private var ticks = 0
 
     private val ui = Handler(Looper.getMainLooper())
@@ -239,7 +241,8 @@ class MainActivity : Activity() {
     }
 
     // ----------------- POWER -----------------
-    private fun setPower(on: Boolean) {
+    /** @param retry false on the second attempt after an auto-scan, so a failure never scans again in a loop */
+    private fun setPower(on: Boolean, retry: Boolean = true) {
         val ip = currentIp()
         if (ip.isEmpty()) {
             message = "Enter the bulb's IP address first, or tap Scan."
@@ -254,18 +257,72 @@ class MainActivity : Activity() {
             val ok = WizBulb.setPower(ip, on, timeoutMs = 4000)
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                message = if (ok) null else "The bulb didn't answer. Check the IP and that this device is on the bulb's Wi-Fi."
-                if (ok) showPowerState(on)
+                when {
+                    ok -> {
+                        message = null
+                        showPowerState(on)
+                    }
+                    retry -> autoScan("The bulb at $ip didn't answer.") { setPower(on, retry = false) }
+                    else -> message = "The bulb didn't answer. Check it's switched on and this device is on its Wi-Fi."
+                }
             }
         }
     }
 
-    private fun refreshPowerState() {
+    /** @param allowAutoScan false after an auto-scan, so an unreachable bulb is only searched for once */
+    private fun refreshPowerState(allowAutoScan: Boolean = true) {
         val ip = currentIp()
         if (ip.isEmpty()) return
         io.execute {
             val on = WizBulb.isOn(ip)
-            runOnUiThread { if (!isFinishing && !isDestroyed) showPowerState(on) }
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                showPowerState(on)
+                // Search once per IP per visit: the bulb may simply be switched off at the wall
+                if (on == null && allowAutoScan && autoScannedIp != ip && !SyncService.isRunning) {
+                    autoScannedIp = ip
+                    autoScan("The bulb at $ip didn't answer.") { refreshPowerState(allowAutoScan = false) }
+                }
+            }
+        }
+    }
+
+    /**
+     * Called when the saved bulb doesn't answer: scans the Wi-Fi and, if exactly one bulb answers,
+     * switches to it and runs [then] with its IP. Several bulbs show the pick list ([then] runs on a
+     * pick); none keeps the old IP, which may be fine once the bulb is switched back on.
+     */
+    private fun autoScan(reason: String, then: (String) -> Unit) {
+        if (scanning) return
+        scanning = true
+        scan.text = "Scanning..."
+        message = "$reason Looking for it on this Wi-Fi..."
+        val appContext = applicationContext
+        io.execute {
+            val bulbs = WizBulb.discover(appContext)
+            runOnUiThread {
+                scanning = false
+                scan.text = "Scan"
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                val old = currentIp()
+                when {
+                    bulbs.isEmpty() -> message = "$reason No WiZ bulb answered the scan either. " +
+                        "Check it's switched on and this device is on its Wi-Fi; the IP was kept."
+                    bulbs.size == 1 -> {
+                        val ip = bulbs[0].ip
+                        if (ip != old) {
+                            autoScannedIp = ip
+                            bulbIp.setText(ip)
+                        }
+                        message = if (ip != old) "Bulb found at a new address: now using $ip (was $old)." else null
+                        then(ip)
+                    }
+                    else -> {
+                        message = "$reason Found ${bulbs.size} bulbs; pick yours."
+                        showScanResults(bulbs, then)
+                    }
+                }
+            }
         }
     }
 
@@ -475,7 +532,8 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showScanResults(bulbs: List<WizBulb.Found>) {
+    /** @param onPicked runs with the chosen IP after the user picks a bulb */
+    private fun showScanResults(bulbs: List<WizBulb.Found>, onPicked: ((String) -> Unit)? = null) {
         if (bulbs.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("No bulbs found")
@@ -492,8 +550,10 @@ class MainActivity : Activity() {
             .setTitle(if (bulbs.size == 1) "Found 1 bulb" else "Found ${bulbs.size} bulbs")
             .setItems(labels) { _, which ->
                 val ip = bulbs[which].ip
+                autoScannedIp = ip
                 bulbIp.setText(ip)
                 message = "Bulb set to $ip"
+                onPicked?.invoke(ip)
             }
             .setNegativeButton("Cancel", null)
             .show()
@@ -585,9 +645,28 @@ class MainActivity : Activity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     // ----------------- START / STOP -----------------
-    private fun requestStart() {
-        if (currentIp().isEmpty()) {
+    /** @param bulbChecked true once the bulb answered (or was just found by an auto-scan) */
+    private fun requestStart(bulbChecked: Boolean = false) {
+        val ip = currentIp()
+        if (ip.isEmpty()) {
             message = "Enter the bulb's IP address first, or tap Scan."
+            return
+        }
+        if (!bulbChecked) {
+            // Make sure the light show has a bulb to talk to before asking for capture permission
+            message = "Checking the bulb..."
+            io.execute {
+                val reachable = WizBulb.isOn(ip, timeoutMs = 1000) != null
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    if (reachable) {
+                        message = null
+                        requestStart(bulbChecked = true)
+                    } else {
+                        autoScan("The bulb at $ip didn't answer.") { requestStart(bulbChecked = true) }
+                    }
+                }
+            }
             return
         }
         val needed = mutableListOf(Manifest.permission.RECORD_AUDIO)
