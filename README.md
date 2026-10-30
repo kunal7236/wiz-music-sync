@@ -100,7 +100,7 @@ What's different on Windows:
 
 ### Install
 
-Download `WizMusicSync-Windows.exe` from the latest release and run it — a single self-contained file, nothing else to install. It isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
+Download `WizMusicSync-Windows.exe` from the [Windows release](../../releases/tag/windows-v1.5) and run it — a single self-contained file, nothing else to install. It isn't code-signed, so Windows SmartScreen may say "Windows protected your PC": choose **More info → Run anyway**.
 
 ### Build
 
